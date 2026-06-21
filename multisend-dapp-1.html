@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi Send Token DApp</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f1420;
+    color: #e6e9f0;
+    margin: 0;
+    padding: 16px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 16px 0 4px;
+  }
+  .subtitle {
+    color: #8a92a6;
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: #1a2030;
+    border: 1px solid #2a3145;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: #aab2c5;
+    margin-bottom: 6px;
+    margin-top: 12px;
+  }
+  label:first-child { margin-top: 0; }
+  input, textarea {
+    width: 100%;
+    background: #0f1420;
+    border: 1px solid #2a3145;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #e6e9f0;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  textarea {
+    min-height: 110px;
+    resize: vertical;
+    font-family: monospace;
+    font-size: 12px;
+  }
+  button {
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 14px;
+  }
+  .btn-primary { background: #3b82f6; color: white; }
+  .btn-primary:disabled { background: #2a3145; color: #6b7280; cursor: not-allowed; }
+  .btn-secondary { background: #2a3145; color: #e6e9f0; }
+  .btn-secondary:disabled { background: #1a2030; color: #6b7280; cursor: not-allowed; }
+  .status {
+    font-size: 13px;
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    word-break: break-all;
+    display: none;
+  }
+  .status.show { display: block; }
+  .status.info { background: #1e2a3f; color: #7eb6ff; }
+  .status.success { background: #16301f; color: #5fd97f; }
+  .status.error { background: #3a1a1a; color: #ff8585; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row span { font-size: 13px; color: #aab2c5; }
+  .row b { color: #e6e9f0; }
+  .pill {
+    display: inline-block;
+    background: #2a3145;
+    color: #aab2c5;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    margin-left: 6px;
+  }
+  .hint {
+    font-size: 11.5px;
+    color: #6b7280;
+    margin-top: 6px;
+  }
+  .wallet-box {
+    font-size: 13px;
+    word-break: break-all;
+    color: #7eb6ff;
+  }
+</style>
+</head>
+<body>
+
+<h1>🚀 Multi Send Token</h1>
+<div class="subtitle">Kirim token dengan nominal sama ke banyak wallet sekaligus (Base chain)</div>
+
+<!-- WALLET CONNECT -->
+<div class="card">
+  <div id="walletInfo" class="wallet-box">Wallet belum terhubung</div>
+  <button id="btnConnect" class="btn-primary">Connect Wallet</button>
+</div>
+
+<!-- TOKEN INFO -->
+<div class="card">
+  <label>Alamat Token ERC-20</label>
+  <input id="tokenAddress" placeholder="0x..." value="">
+  <button id="btnLoadToken" class="btn-secondary">Cek Token</button>
+  <div id="tokenInfo" class="status info"></div>
+</div>
+
+<!-- APPROVE -->
+<div class="card">
+  <label>Jumlah Token per Wallet</label>
+  <input id="amountPerWallet" placeholder="contoh: 1" type="number" step="any">
+  <div class="hint">Masukkan dalam satuan token biasa (bukan wei), contoh isi 1 untuk 1 USDC. Akan otomatis dikonversi sesuai decimals token.</div>
+
+  <label>Daftar Wallet Penerima (satu alamat per baris)</label>
+  <textarea id="recipientsList" placeholder="0xabc...
+0xdef...
+0x123..."></textarea>
+  <div class="hint" id="recipientCount">0 wallet terdeteksi</div>
+
+  <div class="row" style="margin-top:14px;">
+    <span>Total yang perlu di-approve:</span>
+  </div>
+  <div class="row">
+    <b id="totalAmountDisplay">-</b>
+  </div>
+
+  <button id="btnApprove" class="btn-primary" disabled>1. Approve Token</button>
+  <div id="approveStatus" class="status"></div>
+
+  <button id="btnSend" class="btn-primary" disabled style="margin-top:10px;">2. Kirim Multi Send</button>
+  <div id="sendStatus" class="status"></div>
+</div>
+
+<script>
+const MULTISEND_CONTRACT = "0x712127985b107eEfa2085BcAd0C78D7ff7F36FDe";
+
+const MULTISEND_ABI = [
+  "function multiSendEqual(address token, address[] recipients, uint256 amountPerWallet) external",
+  "function checkAllowance(address token, address userAddress) view returns (uint256)",
+  "function checkBalance(address token, address userAddress) view returns (uint256)",
+  "function checkDecimals(address token) view returns (uint8)",
+  "function checkSymbol(address token) view returns (string)",
+  "function checkReadiness(address token, address userAddress, uint256 amountPerWallet, uint256 totalWallets) view returns (bool, bool, uint256)"
+];
+
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function balanceOf(address account) view returns (uint256)"
+];
+
+let provider, signer, userAddress;
+let tokenDecimals = 18;
+let tokenSymbol = "";
+
+// ===== Multi-wallet detection (EIP-6963) =====
+// Mendukung banyak wallet sekaligus (Rabby, MetaMask, Trust, Coinbase, dll)
+let discoveredWallets = [];
+
+window.addEventListener("eip6963:announceProvider", (event) => {
+  const exists = discoveredWallets.find(w => w.info.uuid === event.detail.info.uuid);
+  if (!exists) discoveredWallets.push(event.detail);
+});
+window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+const el = id => document.getElementById(id);
+
+function showStatus(elementId, type, message) {
+  const box = el(elementId);
+  box.className = "status show " + type;
+  box.innerText = message;
+}
+
+function getRecipients() {
+  return el("recipientsList").value
+    .split("\n")
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+}
+
+el("recipientsList").addEventListener("input", () => {
+  const list = getRecipients();
+  el("recipientCount").innerText = list.length + " wallet terdeteksi";
+  updateTotalDisplay();
+});
+
+el("amountPerWallet").addEventListener("input", updateTotalDisplay);
+
+function updateTotalDisplay() {
+  const amount = parseFloat(el("amountPerWallet").value) || 0;
+  const count = getRecipients().length;
+  const total = amount * count;
+  el("totalAmountDisplay").innerText = total > 0
+    ? total + " " + (tokenSymbol || "TOKEN") + " (untuk " + count + " wallet)"
+    : "-";
+}
+
+// Tunggu provider injeksi sampai timeout (beberapa wallet butuh waktu inject saat page load)
+function waitForEthereumProvider(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    if (window.ethereum) { resolve(window.ethereum); return; }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (window.ethereum) {
+        clearInterval(interval);
+        resolve(window.ethereum);
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(interval);
+        resolve(null);
+      }
+    }, 100);
+  });
+}
+
+async function connectWithRawProvider(rawProvider) {
+  provider = new ethers.providers.Web3Provider(rawProvider);
+  await provider.send("eth_requestAccounts", []);
+  signer = provider.getSigner();
+  userAddress = await signer.getAddress();
+
+  const network = await provider.getNetwork();
+  el("walletInfo").innerText = "Connected: " + userAddress.slice(0,6) + "..." + userAddress.slice(-4) + " (Chain ID: " + network.chainId + ")";
+  el("btnConnect").innerText = "Wallet Connected ✓";
+  el("btnConnect").disabled = true;
+
+  if (network.chainId !== 8453) {
+    el("walletInfo").innerText += " ⚠️ Bukan Base Mainnet, ganti network dulu di wallet";
+  }
+}
+
+el("btnConnect").addEventListener("click", async () => {
+  try {
+    // Beri waktu sebentar untuk wallet sempat inject (EIP-6963 / window.ethereum)
+    showStatus("approveStatus", "info", "Mendeteksi wallet...");
+
+    // Tunggu sebentar supaya event eip6963 sempat masuk semua
+    await new Promise(r => setTimeout(r, 300));
+
+    if (discoveredWallets.length > 1) {
+      // Ada lebih dari 1 wallet terdeteksi -> tampilkan pilihan sederhana
+      const names = discoveredWallets.map((w, i) => (i + 1) + ". " + w.info.name).join("\n");
+      const choice = prompt("Pilih wallet (ketik angka):\n" + names);
+      const idx = parseInt(choice) - 1;
+      if (discoveredWallets[idx]) {
+        await connectWithRawProvider(discoveredWallets[idx].provider);
+        el("approveStatus").classList.remove("show");
+        return;
+      }
+    } else if (discoveredWallets.length === 1) {
+      await connectWithRawProvider(discoveredWallets[0].provider);
+      el("approveStatus").classList.remove("show");
+      return;
+    }
+
+    // Fallback: tunggu window.ethereum klasik (Brave Wallet, MetaMask lama, dll)
+    const eth = await waitForEthereumProvider(2000);
+    if (!eth) {
+      showStatus("approveStatus", "error",
+        "Wallet tidak terdeteksi. Pastikan dibuka via https:// atau file:// langsung di address bar Brave (bukan dari Downloads viewer), dan extension wallet aktif untuk site ini.");
+      return;
+    }
+    await connectWithRawProvider(eth);
+    el("approveStatus").classList.remove("show");
+  } catch (err) {
+    showStatus("approveStatus", "error", "Gagal connect: " + (err.message || err));
+  }
+});
+
+el("btnLoadToken").addEventListener("click", async () => {
+  if (!signer) { alert("Connect wallet dulu"); return; }
+  const tokenAddr = el("tokenAddress").value.trim();
+  if (!ethers.utils.isAddress(tokenAddr)) {
+    showStatus("tokenInfo", "error", "Alamat token tidak valid");
+    return;
+  }
+  try {
+    const token = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
+    tokenDecimals = await token.decimals();
+    tokenSymbol = await token.symbol();
+    const balance = await token.balanceOf(userAddress);
+    const balanceFormatted = ethers.utils.formatUnits(balance, tokenDecimals);
+
+    showStatus("tokenInfo", "success",
+      "Token: " + tokenSymbol + " | Decimals: " + tokenDecimals + " | Saldo kamu: " + balanceFormatted + " " + tokenSymbol);
+
+    el("btnApprove").disabled = false;
+    updateTotalDisplay();
+  } catch (err) {
+    showStatus("tokenInfo", "error", "Gagal load token: " + err.message);
+  }
+});
+
+el("btnApprove").addEventListener("click", async () => {
+  const tokenAddr = el("tokenAddress").value.trim();
+  const amount = parseFloat(el("amountPerWallet").value);
+  const recipients = getRecipients();
+
+  if (!amount || amount <= 0) { showStatus("approveStatus", "error", "Isi jumlah token per wallet dulu"); return; }
+  if (recipients.length === 0) { showStatus("approveStatus", "error", "Isi daftar wallet penerima dulu"); return; }
+
+  try {
+    const totalAmount = amount * recipients.length;
+    const totalAmountWei = ethers.utils.parseUnits(totalAmount.toString(), tokenDecimals);
+
+    showStatus("approveStatus", "info", "Mengirim transaksi approve, cek wallet kamu...");
+
+    const token = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
+    const tx = await token.approve(MULTISEND_CONTRACT, totalAmountWei);
+
+    showStatus("approveStatus", "info", "Menunggu konfirmasi... Tx: " + tx.hash);
+    await tx.wait();
+
+    showStatus("approveStatus", "success", "✅ Approve berhasil! Total " + totalAmount + " " + tokenSymbol + " sudah diizinkan.");
+    el("btnSend").disabled = false;
+  } catch (err) {
+    showStatus("approveStatus", "error", "Approve gagal: " + (err.reason || err.message));
+  }
+});
+
+el("btnSend").addEventListener("click", async () => {
+  const tokenAddr = el("tokenAddress").value.trim();
+  const amount = parseFloat(el("amountPerWallet").value);
+  const recipients = getRecipients();
+
+  for (const r of recipients) {
+    if (!ethers.utils.isAddress(r)) {
+      showStatus("sendStatus", "error", "Alamat tidak valid ditemukan: " + r);
+      return;
+    }
+  }
+
+  try {
+    const amountWei = ethers.utils.parseUnits(amount.toString(), tokenDecimals);
+
+    showStatus("sendStatus", "info", "Mengecek allowance & saldo...");
+
+    const multisend = new ethers.Contract(MULTISEND_CONTRACT, MULTISEND_ABI, signer);
+    const readiness = await multisend.checkReadiness(tokenAddr, userAddress, amountWei, recipients.length);
+    const [allowanceEnough, balanceEnough] = readiness;
+
+    if (!allowanceEnough) {
+      showStatus("sendStatus", "error", "Allowance belum cukup. Approve dulu (langkah 1).");
+      return;
+    }
+    if (!balanceEnough) {
+      showStatus("sendStatus", "error", "Saldo token kamu tidak cukup.");
+      return;
+    }
+
+    showStatus("sendStatus", "info", "Mengirim transaksi multi-send, cek wallet kamu...");
+
+    const tx = await multisend.multiSendEqual(tokenAddr, recipients, amountWei);
+
+    showStatus("sendStatus", "info", "Menunggu konfirmasi... Tx: " + tx.hash);
+    await tx.wait();
+
+    showStatus("sendStatus", "success",
+      "✅ Berhasil! " + amount + " " + tokenSymbol + " terkirim ke " + recipients.length + " wallet.\nTx hash: " + tx.hash);
+  } catch (err) {
+    showStatus("sendStatus", "error", "Gagal kirim: " + (err.reason || err.message));
+  }
+});
+</script>
+
+</body>
+</html>
